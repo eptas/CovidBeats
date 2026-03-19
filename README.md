@@ -1,5 +1,6 @@
 # Data Analyses
 **Paper title:** The vibe of musical and social reward: Listening to beat-based music as a surrogate for socioemotional support during the Covid-19 pandemic across Europe 
+
 **Date:** 19/03/2026  
 
 ## Authors
@@ -21,7 +22,9 @@ The following R libraries are required for this analysis:
 
 | File | Description |
 | :--- | :--- |
-| `analyses.Rmd` | The feature reduction analysis for the total data set. |
+| `analyses.Rmd` | Pre/post COVID-19 and mediation analyses described in the Method section of the paper. |
+| `analyses.md` | Compiled report (Markdown) of the Pre/post COVID-19 and mediation analyses script. It can be regenerated using `analyses.Rmd` and `data/data_all_europe_st.RDS`, `data/data_all_stress_europe.RDS`, and `data/data_all_stress_europe_st.RDS` |
+| `docs/analyses.html` | Compiled report (HTML) of the Pre/post COVID-19 and mediation analyses script. It can be regenerated using `analyses.Rmd` and `data/data_all_europe_st.RDS`, `data/data_all_stress_europe.RDS`, and `data/data_all_stress_europe_st.RDS` |
 
 ### Data Files
 * `data/data_all_europe_st.RDS`: Data frame required by `analyses.Rmd` script.
