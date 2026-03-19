@@ -1,0 +1,543 @@
+---
+title: "The vibe of musical and social reward: Listening to beat-based music as a surrogate for socioemotional support during the Covid-19 pandemic across Europe"
+date: "`r format(Sys.time(), '%d %B, %Y')`"
+author:
+- "Lena Esther Ptasczynski [Charité - Universitätsmedizin Berlin, lena-esther.ptasczynski@charite.de]"
+- "Patrick Blättermann [Institute of Sound and Vibration Engineering, Hochschule Düsseldorf, patrick.blaettermann@hs-duesseldorf.de]"
+- "Fabian Greb [independent researcher, fabian.greb@gmx.de]"
+- "Philipp Sterzer [University Psychiatric Clinics Basel, philipp.sterzer@upk.ch]"
+- "Jochen Steffens [Institute of Sound and Vibration Engineering, Hochschule Düsseldorf, jochen.steffens@hs-duesseldorf.de]"
+output:
+  github_document:
+    toc: true
+  html_document:
+    toc: true
+---
+
+# Description
+
+This script runs mixed-effects mediation analyses for danceability, valence, and energy, with the Stringency Index as predictor, temperature as covariate, and multiple mediators. Additionally, it performs a pre/post analysis comparing the period before versus after the onset of the Covid-19 pandemic, and computes country-level descriptive statistics.
+
+```{=html}
+<style>
+.main-container {
+  max-width: 95% !important;
+  margin-left: 20px !important;
+  margin-right: 20px !important;
+}
+
+.container-fluid {
+  max-width: 95% !important;
+}
+
+body {
+  max-width: 100%;
+}
+</style>
+```
+
+
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(
+  echo = TRUE,
+  message = FALSE,
+  warning = FALSE
+)
+
+is_html_output <- knitr::is_html_output(excludes = c("markdown", "gfm"))
+```
+
+
+# Load libraries
+
+```{r}
+# Install libraries if not installed already
+# and load libraries
+for (package in c("dplyr", "tibble", "performance", "lme4", "lmerTest", "mediation", "purrr", "knitr", "DT")) {
+  if (!require(package, character.only = TRUE, quietly = TRUE)) {
+    install.packages(package)
+    library(package, character.only = TRUE)
+  }
+}
+```
+
+# Helper functions
+
+```{r}
+
+build_formula <- function(response, predictors) {
+  as.formula(
+    paste(response, "~", paste(predictors, collapse = " + "))
+  )
+}
+
+format_effect <- function(est, p, sig, digits = 3) {
+  p_txt <- ifelse(
+    is.na(p),
+    "NA",
+    format.pval(p, digits = digits, eps = .001)
+  )
+
+  out <- sprintf(
+    paste0("%.", digits, "f%s (p = %s)"),
+    est, sig, p_txt
+  )
+
+  out[is.na(est)] <- NA_character_
+  out
+}
+
+p_to_stars <- function(p) {
+  if (is.na(p)) return("")
+  if (p < .001) return("***")
+  if (p < .01)  return("**")
+  if (p < .05)  return("*")
+  if (p < .1)   return(".")
+  ""
+}
+
+extract_coef_info <- function(model, term) {
+  coef_tab <- coef(summary(model))
+
+  if (!term %in% rownames(coef_tab)) {
+    return(tibble::tibble(
+      estimate = NA_real_,
+      p_value = NA_real_,
+      sig = NA_character_
+    ))
+  }
+
+  p_col <- grep("^Pr\\(", colnames(coef_tab), value = TRUE)
+
+  p_val <- if (length(p_col) == 1) coef_tab[term, p_col] else NA_real_
+
+  tibble::tibble(
+    estimate = unname(coef_tab[term, "Estimate"]),
+    p_value = unname(p_val),
+    sig = p_to_stars(unname(p_val))
+  )
+}
+
+extract_med_info <- function(med_object) {
+  s <- summary(med_object)
+
+  indirect_est <- if ("d.avg" %in% names(s)) s$d.avg else if ("d0" %in% names(s)) s$d0 else NA_real_
+  indirect_p   <- if ("d.avg.p" %in% names(s)) s$d.avg.p else if ("d0.p" %in% names(s)) s$d0.p else NA_real_
+
+  direct_est   <- if ("z.avg" %in% names(s)) s$z.avg else if ("z0" %in% names(s)) s$z0 else NA_real_
+  direct_p     <- if ("z.avg.p" %in% names(s)) s$z.avg.p else if ("z0.p" %in% names(s)) s$z0.p else NA_real_
+
+  total_est    <- if ("tau.coef" %in% names(s)) s$tau.coef else NA_real_
+  total_p      <- if ("tau.p" %in% names(s)) s$tau.p else NA_real_
+
+  tibble::tibble(
+    indirect_effect = indirect_est,
+    indirect_p = indirect_p,
+    indirect_sig = p_to_stars(indirect_p),
+
+    direct_effect = direct_est,
+    direct_p = direct_p,
+    direct_sig = p_to_stars(direct_p),
+
+    total_effect = total_est,
+    total_p = total_p,
+    total_sig = p_to_stars(total_p)
+  )
+}
+
+make_summary_row <- function(result, analysis_id, section_title, outcome, mediator,
+                             treatment = "Stringency_index") {
+
+  med_info <- extract_med_info(result$med)
+  a_info   <- extract_coef_info(result$m2_lmtest, treatment)
+  b_info   <- extract_coef_info(result$m1_lmtest, mediator)
+
+  tibble::tibble(
+    analysis_id = analysis_id,
+    section_title = section_title,
+    outcome = outcome,
+    mediator = mediator,
+
+    indirect_effect = med_info$indirect_effect,
+    indirect_p = med_info$indirect_p,
+    indirect_sig = med_info$indirect_sig,
+
+    direct_effect = med_info$direct_effect,
+    direct_p = med_info$direct_p,
+    direct_sig = med_info$direct_sig,
+
+    total_effect = med_info$total_effect,
+    total_p = med_info$total_p,
+    total_sig = med_info$total_sig,
+
+    a_path = a_info$estimate,
+    a_p = a_info$p_value,
+    a_sig = a_info$sig,
+
+    b_path = b_info$estimate,
+    b_p = b_info$p_value,
+    b_sig = b_info$sig
+  )
+}
+
+fit_model_set <- function(data, outcome, mediator,
+                          treatment = "Stringency_index",
+                          group = "Country",
+                          covariate = "Temp_mean") {
+
+  # same formulas as in your original code
+  f_m1 <- build_formula(outcome, c(treatment, mediator, paste0("(1|", group, ")"), covariate))
+  f_m2 <- build_formula(mediator, c(treatment, paste0("(1|", group, ")")))
+  f_m3 <- build_formula(outcome, c(treatment, paste0("(1|", group, ")"), covariate))
+  f_m4 <- build_formula(outcome, c(mediator, paste0("(1|", group, ")"), covariate))
+
+  # lme4 models
+  m1 <- lme4::lmer(f_m1, data = data)
+  m2 <- lme4::lmer(f_m2, data = data)
+  m3 <- lme4::lmer(f_m3, data = data)
+  m4 <- lme4::lmer(f_m4, data = data)
+
+  # mediation model
+  set.seed(21)
+  med <- mediation::mediate(
+    model.m = m2,
+    model.y = m1,
+    treat = treatment,
+    mediator = mediator
+  )
+
+  # lmerTest models for significance tests
+  m1_lmtest <- lmerTest::lmer(f_m1, data = data)
+  m2_lmtest <- lmerTest::lmer(f_m2, data = data)
+  m3_lmtest <- lmerTest::lmer(f_m3, data = data)
+  m4_lmtest <- lmerTest::lmer(f_m4, data = data)
+
+  list(
+    m1 = m1, m2 = m2, m3 = m3, m4 = m4,
+    med = med,
+    m1_lmtest = m1_lmtest, m2_lmtest = m2_lmtest,
+    m3_lmtest = m3_lmtest, m4_lmtest = m4_lmtest
+  )
+}
+
+get_first_existing <- function(x, candidates) {
+  for (nm in candidates) {
+    if (!is.null(x[[nm]])) return(x[[nm]])
+  }
+  NULL
+}
+
+extract_med_effect_from_object <- function(med_object,
+                                           effect = c("indirect", "direct", "total"),
+                                           conf_level = 0.95) {
+  effect <- match.arg(effect)
+
+  alpha <- 1 - conf_level
+  probs <- c(alpha / 2, 1 - alpha / 2)
+
+  if (effect == "indirect") {
+    effect_label <- "Indirect effect (ACME)"
+    est <- get_first_existing(med_object, c("d.avg", "d0"))
+    p   <- get_first_existing(med_object, c("d.avg.p", "d0.p"))
+    sims <- get_first_existing(med_object, c("d.avg.sims", "d0.sims"))
+  } else if (effect == "direct") {
+    effect_label <- "Direct effect (ADE)"
+    est <- get_first_existing(med_object, c("z.avg", "z0"))
+    p   <- get_first_existing(med_object, c("z.avg.p", "z0.p"))
+    sims <- get_first_existing(med_object, c("z.avg.sims", "z0.sims"))
+  } else {
+    effect_label <- "Total effect"
+    est <- get_first_existing(med_object, c("tau.coef"))
+    p   <- get_first_existing(med_object, c("tau.p"))
+    sims <- get_first_existing(med_object, c("tau.sims"))
+  }
+
+  ci_lower <- NA_real_
+  ci_upper <- NA_real_
+
+  if (!is.null(sims)) {
+    ci_vals <- stats::quantile(as.numeric(sims), probs = probs, na.rm = TRUE)
+    ci_lower <- unname(ci_vals[1])
+    ci_upper <- unname(ci_vals[2])
+  }
+
+  tibble::tibble(
+    Effect = effect_label,
+    Estimate = as.numeric(est)[1],
+    ci_lower = ci_lower,
+    ci_upper = ci_upper,
+    p_value = as.numeric(p)[1],
+    Significance = p_to_stars(as.numeric(p)[1])
+  )
+}
+
+format_ci <- function(lower, upper, digits = 3) {
+  out <- sprintf(
+    paste0("[%.", digits, "f, %.", digits, "f]"),
+    lower, upper
+  )
+  out[is.na(lower) | is.na(upper)] <- NA_character_
+  out
+}
+
+make_med_ci_table <- function(med_object, digits = 3) {
+  dplyr::bind_rows(
+    extract_med_effect_from_object(med_object, "indirect"),
+    extract_med_effect_from_object(med_object, "direct"),
+    extract_med_effect_from_object(med_object, "total")
+  ) %>%
+    dplyr::mutate(
+      `95% CI` = format_ci(ci_lower, ci_upper, digits = digits),
+      Estimate = round(Estimate, digits),
+      `p-value` = round(p_value, digits)
+    ) %>%
+    dplyr::select(
+      Effect,
+      Estimate,
+      `95% CI`,
+      `p-value`,
+      Significance
+    )
+}
+```
+
+# Load dataframes
+
+```{r}
+data_all_europe_st <- readRDS("data/data_all_europe_st.RDS")
+
+data_all_stress_europe <- readRDS("data/data_all_stress_europe.RDS")
+
+data_all_stress_europe_st <- readRDS("data/data_all_stress_europe_st.RDS")
+
+```
+
+# Calculate means and SEM
+
+```{r}
+means <- data_all_stress_europe %>%
+            group_by(Country) %>%
+            summarise(
+              Mean_danceability = mean(Danceability_mean, na.rm=TRUE),
+              Mean_stringency_index = mean(Stringency_index, na.rm=TRUE),
+              Mean_sps_sum = mean(SPS_SUM_mean, na.rm=TRUE),
+              Mean_sps_si = mean(SPS_SI_mean, na.rm=TRUE),
+              Mean_sps_row = mean(SPS_ROW_mean, na.rm=TRUE),
+              Mean_sps_a = mean(SPS_A_mean, na.rm=TRUE),
+              Mean_sps_sora = mean(SPS_SORA_mean, na.rm=TRUE),
+              Mean_sps_g = mean(SPS_G_mean, na.rm=TRUE),
+              SEM_danceability = sd(Danceability_mean, na.rm=TRUE)/sqrt(sum(!is.na(Danceability_mean))),
+              SEM_stringency_index = sd(Stringency_index, na.rm=TRUE)/sqrt(sum(!is.na(Stringency_index))),
+              SEM_sps_sum = sd(SPS_SUM_mean, na.rm=TRUE)/sqrt(sum(!is.na(SPS_SUM_mean))),
+              SEM_sps_si = sd(SPS_SI_mean, na.rm=TRUE)/sqrt(sum(!is.na(SPS_SI_mean))),
+              SEM_sps_row = sd(SPS_ROW_mean, na.rm=TRUE)/sqrt(sum(!is.na(SPS_ROW_mean))),
+              SEM_sps_a = sd(SPS_A_mean, na.rm=TRUE)/sqrt(sum(!is.na(SPS_A_mean))),
+              SEM_sps_sora = sd(SPS_SORA_mean, na.rm=TRUE)/sqrt(sum(!is.na(SPS_SORA_mean))),
+              SEM_sps_g = sd(SPS_G_mean, na.rm=TRUE)/sqrt(sum(!is.na(SPS_G_mean)))
+  )
+
+means
+```
+
+# Pre/post analysis
+
+```{r}
+model_period_dance_lmtest = lmerTest::lmer(Danceability_mean ~ relevel(Period, ref="pre")+Temp_mean+(1|Country), data = data_all_europe_st)
+model_period_dance = lme4::lmer(Danceability_mean ~ relevel(Period, ref="pre")+Temp_mean+(1|Country), data = data_all_europe_st)
+
+set.seed(21)
+model_period_dance_CI = confint(model_period_dance, method="boot", nsim=1000)
+
+summary(model_period_dance_lmtest)
+performance::r2(model_period_dance_lmtest)
+performance::icc(model_period_dance_lmtest)
+
+model_period_dance_CI
+
+##Check regression Assumptions (visual)
+plot(model_period_dance_lmtest)
+
+qqnorm(resid(model_period_dance_lmtest))
+hist(resid(model_period_dance_lmtest))
+```
+
+# Create analysis plan for mediation
+
+```{r}
+analysis_plan <- tribble(
+  ~analysis_id,                ~section_title,                                                  ~outcome,              ~mediator,                     ~med_summary_output, ~med_plot,
+  "string_sps_dance",          "Stringency -> SPS SUM Score -> Dance",                          "Danceability_mean",   "SPS_SUM_mean",                NA_character_,       FALSE,
+  "string_si_dance",           "Stringency -> SPS Social Integration -> Dance",                 "Danceability_mean",   "SPS_SI_mean",                 NA_character_,       FALSE,
+  "string_row_dance",          "Stringency -> SPS Reassurance of worth score -> Dance",         "Danceability_mean",   "SPS_ROW_mean",                NA_character_,       FALSE,
+  "string_a_dance",            "Stringency -> SPS Attachment -> Dance",                         "Danceability_mean",   "SPS_A_mean",                  NA_character_,       FALSE,
+  "string_sora_dance",         "Stringency -> SPS Sense of reliable alliance -> Dance",         "Danceability_mean",   "SPS_SORA_mean",               NA_character_,       FALSE,
+  "string_g_dance",            "Stringency -> SPS Guidance -> Dance",                           "Danceability_mean",   "SPS_G_mean",                  NA_character_,       FALSE,
+  "string_slon_dance",         "Stringency -> Scale SLON SUM -> Dance",                         "Danceability_mean",   "Scale_SLON_SUM_mean",         NA_character_,       FALSE,
+  "string_pss_dance",          "Stringency -> Scale PSS10 UCLA SUM_mean -> Dance",              "Danceability_mean",   "Scale_PSS10_UCLA_SUM_mean",   NA_character_,       FALSE,
+
+  "string_sps_valence",        "Stringency -> SPS SUM Score -> Valence",                        "Valence_mean",        "SPS_SUM_mean",                NA_character_,       FALSE,
+  "string_si_valence",         "Stringency -> SPS Social Integration -> Valence",               "Valence_mean",        "SPS_SI_mean",                 NA_character_,       FALSE,
+  "string_row_valence",        "Stringency -> SPS Reassurance of worth score -> Valence",       "Valence_mean",        "SPS_ROW_mean",                NA_character_,       FALSE,
+  "string_a_valence",          "Stringency -> SPS Attachment -> Valence",                       "Valence_mean",        "SPS_A_mean",                  NA_character_,       FALSE,
+  "string_sora_valence",       "Stringency -> SPS Sense of reliable alliance -> Valence",       "Valence_mean",        "SPS_SORA_mean",               NA_character_,       FALSE,
+  "string_g_valence",          "Stringency -> SPS Guidance -> Valence",                         "Valence_mean",        "SPS_G_mean",                  NA_character_,       FALSE,
+
+  "string_sps_energy",         "Stringency -> SPS SUM Score -> Energy",                         "Energy_mean",         "SPS_SUM_mean",                NA_character_,       FALSE,
+  "string_si_energy",          "Stringency -> SPS Social Integration -> Energy",                "Energy_mean",         "SPS_SI_mean",                 NA_character_,       FALSE,
+  "string_row_energy",         "Stringency -> SPS Reassurance of worth score -> Energy",        "Energy_mean",         "SPS_ROW_mean",                NA_character_,       FALSE,
+  "string_a_energy",           "Stringency -> SPS Attachment -> Energy",                        "Energy_mean",         "SPS_A_mean",                  NA_character_,       FALSE,
+  "string_sora_energy",        "Stringency -> SPS Sense of reliable alliance -> Energy",        "Energy_mean",         "SPS_SORA_mean",               NA_character_,       FALSE,
+  "string_g_energy",           "Stringency -> SPS Guidance -> Energy",                          "Energy_mean",         "SPS_G_mean",                  NA_character_,       FALSE
+)
+
+kable(
+  analysis_plan %>%
+    dplyr::select(section_title, outcome, mediator),
+  col.names = c("Analysis", "Outcome", "Mediator")
+)
+```
+
+# Fit mediation models
+
+```{r}
+all_results_list <- vector("list", nrow(analysis_plan))
+
+pb <- txtProgressBar(min = 0, max = nrow(analysis_plan), style = 3)
+
+for (i in seq_len(nrow(analysis_plan))) {
+  all_results_list[[i]] <- fit_model_set(
+    data = data_all_stress_europe_st,
+    outcome = analysis_plan$outcome[[i]],
+    mediator = analysis_plan$mediator[[i]]
+  )
+
+  setTxtProgressBar(pb, i)
+}
+
+close(pb)
+
+all_results <- analysis_plan %>%
+  dplyr::mutate(result = all_results_list)
+
+mediation_summary_table <- purrr::pmap_dfr(
+  list(
+    result = all_results$result,
+    analysis_id = all_results$analysis_id,
+    section_title = all_results$section_title,
+    outcome = all_results$outcome,
+    mediator = all_results$mediator
+  ),
+  make_summary_row
+) %>%
+  dplyr::mutate(
+    dplyr::across(
+      c(
+        indirect_effect, indirect_p,
+        direct_effect, direct_p,
+        total_effect, total_p,
+        a_path, a_p,
+        b_path, b_p
+      ),
+      ~ round(.x, 4)
+    )
+  )
+```
+
+# Mediation results
+
+```{r}
+mediation_summary_table_display <- mediation_summary_table %>%
+  dplyr::transmute(
+    Analysis = section_title,
+    Outcome = outcome,
+    Mediator = mediator,
+    `Indirect effect (ACME)` = format_effect(indirect_effect, indirect_p, indirect_sig),
+    `Direct effect (ADE)`   = format_effect(direct_effect, direct_p, direct_sig),
+    `Total effect`          = format_effect(total_effect, total_p, total_sig),
+    `a path: Stringency → Mediator` = format_effect(a_path, a_p, a_sig),
+    `b path: Mediator → Outcome`    = format_effect(b_path, b_p, b_sig)
+  )
+
+if (is_html_output) {
+  DT::datatable(
+    mediation_summary_table_display,
+    rownames = FALSE,
+    filter = "top",
+    options = list(
+      paging = FALSE,
+      scrollX = TRUE,
+      scrollY = "600px",
+      scrollCollapse = TRUE,
+      autoWidth = TRUE
+    ),
+    caption = "Summary of mediation analyses"
+  )
+} else {
+  knitr::kable(
+    mediation_summary_table_display,
+    caption = "Summary of mediation analyses"
+  )
+}
+```
+
+# Mediation results (CI)
+
+```{r}
+
+all_mediation_ci_table <- purrr::pmap_dfr(
+  list(
+    med_object = all_results$result,
+    section_title = all_results$section_title,
+    outcome = all_results$outcome,
+    mediator = all_results$mediator
+  ),
+  function(med_object, section_title, outcome, mediator) {
+    make_med_ci_table(med_object$med) %>%
+      dplyr::mutate(
+        Analysis = section_title,
+        Outcome = outcome,
+        Mediator = mediator,
+        .before = 1
+      )
+  }
+)
+
+if (is_html_output) {
+  DT::datatable(
+    all_mediation_ci_table,
+    width = "100%",
+    rownames = FALSE,
+    filter = "top",
+    class = "display nowrap",
+    options = list(
+      dom = "lfrtip",
+      paging = TRUE,
+      lengthChange = TRUE,
+      pageLength = 20,
+      lengthMenu = list(
+        c(10, 20, 50, 100, -1),
+        c("10", "20", "50", "100", "All")
+      ),
+      scrollX = TRUE,
+      scrollY = "500px",
+      scrollCollapse = TRUE,
+      autoWidth = TRUE
+    ),
+    caption = "Confidence intervals for all mediation models"
+  )
+} else {
+  knitr::kable(
+    all_mediation_ci_table,
+    caption = "Confidence intervals for all mediation models"
+  )
+}
+
+```
+
+# Session info
+
+```{r}
+sI=sessionInfo()
+print(sI, RNG = FALSE, locale = FALSE)
+```
