@@ -23,7 +23,7 @@ The following R libraries are required for this analysis:
 | File | Description |
 | :--- | :--- |
 | `analyses.Rmd` | Pre/post COVID-19 and mediation analyses described in the Method section of the paper. |
-| `analyses.md` | Compiled report (Markdown) of the Pre/post COVID-19 and mediation analyses script. It can be regenerated using `analyses.Rmd` and `data/data_all_europe_st.rds`, `data/data_all_stress_europe.rds`, and `data/data_all_stress_europe_st.rds` |
+| `analyses.md` | Compiled report (Markdown) of the pre/post COVID-19 and mediation analyses script. It can be regenerated using `analyses.Rmd` and `data/data_all_europe_st.rds`, `data/data_all_stress_europe.rds`, and `data/data_all_stress_europe_st.rds` |
 | `docs/analyses.html` | Compiled report (HTML) of the Pre/post COVID-19 and mediation analyses script. It can be regenerated using `analyses.Rmd` and `data/data_all_europe_st.rds`, `data/data_all_stress_europe.rds`, and `data/data_all_stress_europe_st.rds` |
 
 ### Data Files
